@@ -6,6 +6,7 @@ import (
 	"GopherAI/model"
 	"GopherAI/service/session"
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -142,8 +143,9 @@ func ChatSend(c *gin.Context) {
 func ChatStreamSend(c *gin.Context) {
 	req := new(ChatSendRequest)
 	userName := c.GetString("userName") // From JWT middleware
-	if err := c.ShouldBindJSON(req); err != nil {
-		c.JSON(http.StatusOK, gin.H{"error": "Invalid parameters"})
+	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("bind json error: %v", err)
+		c.JSON(http.StatusOK, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -153,7 +155,6 @@ func ChatStreamSend(c *gin.Context) {
 	c.Header("Connection", "keep-alive")
 	c.Header("Access-Control-Allow-Origin", "*")
 	c.Header("X-Accel-Buffering", "no") // 禁止代理缓存
-
 
 	code_ := session.ChatStreamSend(userName, req.SessionID, req.UserQuestion, req.ModelType, http.ResponseWriter(c.Writer))
 	if code_ != code.CodeSuccess {
@@ -180,4 +181,37 @@ func ChatHistory(c *gin.Context) {
 	res.Success()
 	res.History = history
 	c.JSON(http.StatusOK, res)
+}
+
+func ChatSpeech(c *gin.Context) {
+	type TTSRequest struct {
+		Text string `json:"text" binding:"required"`
+	}
+
+	var req TTSRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status_code": 400,
+			"status_msg":  "invalid params",
+		})
+		return
+	}
+
+	// 这里后面接真正的 TTS 逻辑
+	// 比如调用阿里云 / EdgeTTS / 其他语音服务
+	audioURL := ""
+
+	if audioURL == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"status_code": 500,
+			"status_msg":  "tts not implemented",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status_code": 1000,
+		"status_msg":  "success",
+		"url":         audioURL,
+	})
 }

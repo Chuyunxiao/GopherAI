@@ -41,7 +41,7 @@
         >
           <div class="message-header">
             <b>{{ message.role === 'user' ? '你' : 'AI' }}:</b>
-            <button v-if="message.role === 'assistant'" class="tts-btn" @click="playTTS(message.content)">🔊</button>
+            <!-- <button v-if="message.role === 'assistant'" class="tts-btn" @click="playTTS(message.content)">🔊</button> -->
             <span v-if="message.meta && message.meta.status === 'streaming'" class="streaming-indicator"> ··</span>
           </div>
           <div class="message-content" v-html="renderMarkdown(message.content)"></div>
@@ -104,7 +104,7 @@ export default {
 
     const playTTS = async (text) => {
       try {
-        const response = await api.post('/chat/tts', { text })
+        const response = await api.post('AI/chat/tts', { text })
         if (response.data && response.data.status_code === 1000 && response.data.url) {
           const audio = new Audio(response.data.url)
           audio.play()
@@ -206,6 +206,13 @@ export default {
         return
       }
 
+      // 没选任何已有会话时，自动进入临时新会话
+      if (!currentSessionId.value) {
+        currentSessionId.value = 'temp'
+        tempSession.value = true
+        currentMessages.value = []
+      }
+
       const userMessage = {
         role: 'user',
         content: inputMessage.value
@@ -221,21 +228,13 @@ export default {
       try {
         loading.value = true
         if (isStreaming.value) {
-
           await handleStreaming(currentInput)
         } else {
-
           await handleNormal(currentInput)
         }
       } catch (err) {
         console.error('Send message error:', err)
         ElMessage.error('发送失败，请重试')
-
-        if (!tempSession.value && currentSessionId.value && sessions.value[currentSessionId.value] && sessions.value[currentSessionId.value].messages) {
-
-          const sessionArr = sessions.value[currentSessionId.value].messages
-          if (sessionArr && sessionArr.length) sessionArr.pop()
-        }
         currentMessages.value.pop()
       } finally {
         if (!isStreaming.value) {
@@ -264,19 +263,20 @@ export default {
         sessions.value[currentSessionId.value].messages.push({ role: 'assistant', content: '' })
       }
 
+      const newSession = isNewSession()
 
-      const url = tempSession.value
-        ? '/api/AI/chat/send-stream-new-session'  
-        : '/api/AI/chat/send-stream'           
+      const url = newSession
+        ? '/api/AI/chat/send-stream-new-session'
+        : '/api/AI/chat/send-stream'
+
+      const body = newSession
+        ? { question: question, modelType: selectedModel.value }
+        : { question: question, modelType: selectedModel.value, sessionId: currentSessionId.value }         
 
       const headers = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
       }
-
-      const body = tempSession.value
-        ? { question: question, modelType: selectedModel.value }
-        : { question: question, modelType: selectedModel.value, sessionId: currentSessionId.value }
 
       try {
         // 创建 fetch 连接读取 SSE 流
@@ -393,12 +393,14 @@ export default {
 
 
     async function handleNormal(question) {
-      if (tempSession.value) {
+      const newSession = isNewSession()
 
+      if (newSession) {
         const response = await api.post('/AI/chat/send-new-session', {
           question: question,
           modelType: selectedModel.value
         })
+
         if (response.data && response.data.status_code === 1000) {
           const sessionId = String(response.data.sessionId)
           const aiMessage = {
@@ -409,18 +411,16 @@ export default {
           sessions.value[sessionId] = {
             id: sessionId,
             name: '新会话',
-            messages: [ { role: 'user', content: question }, aiMessage ]
+            messages: [{ role: 'user', content: question }, aiMessage]
           }
           currentSessionId.value = sessionId
           tempSession.value = false
           currentMessages.value = [...sessions.value[sessionId].messages]
         } else {
           ElMessage.error(response.data?.status_msg || '发送失败')
-
           currentMessages.value.pop()
         }
       } else {
-
         const sessionMsgs = sessions.value[currentSessionId.value].messages
 
         sessionMsgs.push({ role: 'user', content: question })
@@ -430,18 +430,18 @@ export default {
           modelType: selectedModel.value,
           sessionId: currentSessionId.value
         })
+
         if (response.data && response.data.status_code === 1000) {
           const aiMessage = { role: 'assistant', content: response.data.Information || '' }
           sessionMsgs.push(aiMessage)
           currentMessages.value = [...sessionMsgs]
         } else {
           ElMessage.error(response.data?.status_msg || '发送失败')
-          sessionMsgs.pop() // rollback
+          sessionMsgs.pop()
           currentMessages.value.pop()
         }
       }
     }
-
 
     const scrollToBottom = () => {
       if (messagesRef.value) {
@@ -453,6 +453,10 @@ export default {
       }
     }
 
+    const isNewSession = () => {
+      return tempSession.value || !currentSessionId.value || currentSessionId.value === 'temp'
+    }
+    
     onMounted(() => {
       loadSessions()
     })
